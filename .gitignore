@@ -1,0 +1,13 @@
+# IDE
+.vscode
+
+# OS
+.DS_Store
+Thumbs.db
+$RECYCLE.BIN
+
+# Python
+__pycache__
+.venv
+*.pyc
+*.egg-info

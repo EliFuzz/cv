@@ -180,7 +180,7 @@ def export():
         (img0, img1),
         target_path,
         input_names=["image0", "image1"],
-        output_names=["matches0", "mscores0", "kpts0", "kpts1"],
+        output_names=["matches", "mscores0", "kpts0", "kpts1"],
         **export_kwargs,
     )
 

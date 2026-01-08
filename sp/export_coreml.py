@@ -1,7 +1,10 @@
 """
 CoreML Export for SuperPoint + LightGlue:
 - Inputs: image0, image1 (both 1x3x480x640 tensors)
-- Outputs: matches0, mscores0, kpts0, kpts1
+- Outputs: matches, mscores0, kpts0, kpts1
+
+matches[i] = j means keypoint i in image0 matches keypoint j in image1
+matches[i] = -1 means keypoint i has no match
 """
 
 import os
@@ -454,7 +457,7 @@ def export():
     print("Verifying traced model...")
     with torch.no_grad():
         traced_outputs = traced_model(img0, img1)
-        print(f"  matches0 shape: {traced_outputs[0].shape}")
+        print(f"  matches shape: {traced_outputs[0].shape}")
         print(f"  mscores0 shape: {traced_outputs[1].shape}")
         print(f"  kpts0 shape: {traced_outputs[2].shape}")
         print(f"  kpts1 shape: {traced_outputs[3].shape}")
@@ -475,7 +478,7 @@ def export():
             ),
         ],
         outputs=[
-            ct.TensorType(name="matches0", dtype=np.int32),
+            ct.TensorType(name="matches", dtype=np.int32),
             ct.TensorType(name="mscores0", dtype=np.float32),
             ct.TensorType(name="kpts0", dtype=np.float32),
             ct.TensorType(name="kpts1", dtype=np.float32),

@@ -42,7 +42,7 @@ class XFeatExtractor(nn.Module):
         )
 
         final_scores = (kpts_heatmap * reliability).reshape(-1, 307200)
-        top_scores, top_indices = torch.topk(final_scores, k=self.top_k, dim=-1)
+        _top_scores, top_indices = torch.topk(final_scores, k=self.top_k, dim=-1)
 
         y_coords = (top_indices // 640).float()
         x_coords = (top_indices % 640).float()
@@ -56,7 +56,7 @@ class XFeatExtractor(nn.Module):
         descriptors = descriptors.squeeze(3).permute(0, 2, 1)
         descriptors = F.normalize(descriptors, dim=-1)
 
-        return keypoints, descriptors, top_scores, final_scores, reliability
+        return keypoints, descriptors
 
 
 class DescriptorMatcher(nn.Module):
@@ -74,7 +74,11 @@ class DescriptorMatcher(nn.Module):
         m10_long = match10.long()
         mutual_match = torch.gather(m10_long, 1, m01_long) == idx0.long()
         valid = mutual_match & (score0 > self.threshold)
-        return match01, score0, valid
+
+        matches = torch.where(valid, match01, torch.full_like(match01, -1))
+        mscores = torch.where(valid, score0, torch.zeros_like(score0))
+
+        return matches, mscores
 
 
 class XFeatLighterGlueONNX(nn.Module):
@@ -87,22 +91,12 @@ class XFeatLighterGlueONNX(nn.Module):
 
     def forward(self, image0, image1):
         images = torch.cat([image0, image1], dim=0)
-        kpts, desc, _scores, h, r = self.extractor(images)
+        kpts, desc = self.extractor(images)
         kpts0, kpts1 = kpts[0:1], kpts[1:2]
         desc0, desc1 = desc[0:1], desc[1:2]
-        matches, match_scores, valid = self.matcher(desc0, desc1)
+        matches, mscores = self.matcher(desc0, desc1)
 
-        return (
-            kpts0,
-            kpts1,
-            matches,
-            match_scores,
-            valid,
-            h[0:1],
-            h[1:2],
-            r[0:1],
-            r[1:2],
-        )
+        return matches, mscores, kpts0, kpts1
 
 
 def main():
@@ -127,15 +121,10 @@ def main():
         final_onnx_path,
         input_names=["image0", "image1"],
         output_names=[
+            "matches",
+            "mscores0",
             "kpts0",
             "kpts1",
-            "matches",
-            "scores",
-            "valid",
-            "heat0",
-            "heat1",
-            "rel0",
-            "rel1",
         ],
         opset_version=18,
         do_constant_folding=True,

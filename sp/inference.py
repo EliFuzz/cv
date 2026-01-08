@@ -1,14 +1,14 @@
 from pathlib import Path
 
+import coremltools as ct
 import cv2
 import numpy as np
-import onnxruntime as ort
 from tqdm import tqdm
 
 
 def prepare_image(img):
     """Convert BGR image to CHW float tensor format expected by the model."""
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_rgb = cv2.cvtColor(cv2.resize(img, (640, 480)), cv2.COLOR_BGR2RGB)
     return (img_rgb.transpose(2, 0, 1).astype(np.float32) / 255.0)[np.newaxis, ...]
 
 
@@ -47,13 +47,13 @@ def warp_corners_and_draw_matches(ref_points, dst_points, img0, img1):
 
 def main():
     script_dir = Path(__file__).parent
-    model_path = script_dir / "model" / "superpoint_lightglue.onnx"
+    model_path = script_dir / "model" / "superpoint_lightglue.mlpackage"
     samples_dir = script_dir.parent / "samples"
     results_dir = script_dir / "results"
     results_dir.mkdir(exist_ok=True)
 
     print(f"Loading model: {model_path}")
-    session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+    model = ct.models.MLModel(str(model_path))
 
     folders = sorted(
         [f for f in samples_dir.iterdir() if f.is_dir()],
@@ -74,21 +74,27 @@ def main():
         im0, im1 = cv2.imread(str(imgs[0])), cv2.imread(str(imgs[1]))
         if im0 is None or im1 is None:
             continue
-        im0 = cv2.resize(im0, (640, 480))
-        im1 = cv2.resize(im1, (640, 480))
 
-        m0, _, kpts0, kpts1 = session.run(
-            None, {"image0": prepare_image(im0), "image1": prepare_image(im1)}
+        outputs = model.predict(
+            {"image0": prepare_image(im0), "image1": prepare_image(im1)}
+        )
+        matches, _mscores0, kpts0, kpts1 = (
+            outputs["matches"],
+            outputs["mscores0"],
+            outputs["kpts0"],
+            outputs["kpts1"],
         )
 
-        valid = m0[0] > -1
-        mkpts0, mkpts1 = kpts0[0][valid], kpts1[0][m0[0][valid]]
+        valid = matches[0] > -1
+        mkpts0, mkpts1 = kpts0[0][valid], kpts1[0][matches[0][valid]]
 
         if len(mkpts0) < 4:
             print(f"Skip {folder.name}: only {len(mkpts0)} matches")
             continue
 
-        canvas = warp_corners_and_draw_matches(mkpts0, mkpts1, im0, im1)
+        canvas = warp_corners_and_draw_matches(
+            mkpts0, mkpts1, cv2.resize(im0, (640, 480)), cv2.resize(im1, (640, 480))
+        )
         if canvas is not None:
             cv2.imwrite(str(results_dir / f"{folder.name}_matches.jpg"), canvas)
         else:

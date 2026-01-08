@@ -1,3 +1,12 @@
+"""
+CoreML Export for XFeat + LighterGlue:
+- Inputs: image0, image1 (both 1x3x480x640 tensors)
+- Outputs: matches, mscores0, kpts0, kpts1
+
+matches[i] = j means keypoint i in image0 matches keypoint j in image1
+matches[i] = -1 means keypoint i has no match
+"""
+
 import os
 from pathlib import Path
 
@@ -42,7 +51,7 @@ class XFeatExtractor(nn.Module):
         )
 
         final_scores = (kpts_heatmap * reliability).reshape(-1, 307200)
-        top_scores, top_indices = torch.topk(final_scores, k=self.top_k, dim=-1)
+        _top_scores, top_indices = torch.topk(final_scores, k=self.top_k, dim=-1)
 
         y_coords = (top_indices // 640).float()
         x_coords = (top_indices % 640).float()
@@ -56,7 +65,7 @@ class XFeatExtractor(nn.Module):
         descriptors = descriptors.squeeze(3).permute(0, 2, 1)
         descriptors = F.normalize(descriptors, dim=-1)
 
-        return keypoints, descriptors, top_scores, final_scores, reliability
+        return keypoints, descriptors
 
 
 class DescriptorMatcher(nn.Module):
@@ -74,10 +83,14 @@ class DescriptorMatcher(nn.Module):
         m10_long = match10.long()
         mutual_match = torch.gather(m10_long, 1, m01_long) == idx0.long()
         valid = mutual_match & (score0 > self.threshold)
-        return match01, score0, valid
+
+        matches = torch.where(valid, match01, torch.full_like(match01, -1))
+        mscores = torch.where(valid, score0, torch.zeros_like(score0))
+
+        return matches, mscores
 
 
-class XFeatLighterGlueONNX(nn.Module):
+class XFeatLighterGlueCoreML(nn.Module):
     def __init__(
         self, xfeat_weights: str, top_k: int = 1024, match_threshold: float = 0.7
     ):
@@ -87,22 +100,12 @@ class XFeatLighterGlueONNX(nn.Module):
 
     def forward(self, image0, image1):
         images = torch.cat([image0, image1], dim=0)
-        kpts, desc, _scores, h, r = self.extractor(images)
+        kpts, desc = self.extractor(images)
         kpts0, kpts1 = kpts[0:1], kpts[1:2]
         desc0, desc1 = desc[0:1], desc[1:2]
-        matches, match_scores, valid = self.matcher(desc0, desc1)
+        matches, mscores = self.matcher(desc0, desc1)
 
-        return (
-            kpts0,
-            kpts1,
-            matches,
-            match_scores,
-            valid,
-            h[0:1],
-            h[1:2],
-            r[0:1],
-            r[1:2],
-        )
+        return matches, mscores, kpts0, kpts1
 
 
 def main():
@@ -113,7 +116,7 @@ def main():
     xfeat_weights = weights_dir / "xfeat.pt"
 
     height, width = 480, 640
-    model = XFeatLighterGlueONNX(str(xfeat_weights)).eval()
+    model = XFeatLighterGlueCoreML(str(xfeat_weights)).eval()
 
     dummy_image0 = torch.randn(1, 3, height, width)
     dummy_image1 = torch.randn(1, 3, height, width)
@@ -130,21 +133,17 @@ def main():
             ct.TensorType(name="image1", shape=dummy_image1.shape),
         ],
         outputs=[
+            ct.TensorType(name="matches"),
+            ct.TensorType(name="mscores0"),
             ct.TensorType(name="kpts0"),
             ct.TensorType(name="kpts1"),
-            ct.TensorType(name="matches"),
-            ct.TensorType(name="scores"),
-            ct.TensorType(name="valid"),
-            ct.TensorType(name="heat0"),
-            ct.TensorType(name="heat1"),
-            ct.TensorType(name="rel0"),
-            ct.TensorType(name="rel1"),
         ],
         convert_to="mlprogram",
         minimum_deployment_target=ct.target.iOS16,
         compute_precision=ct.precision.FLOAT32,
     )
     mlmodel.save(str(output_dir / "xfeat_lighterglue.mlpackage"))
+    print(f"Saved CoreML model to {output_dir / 'xfeat_lighterglue.mlpackage'}")
 
 
 if __name__ == "__main__":

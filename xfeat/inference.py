@@ -12,33 +12,51 @@ def prepare_image(img):
 
 
 def warp_corners_and_draw_matches(ref_points, dst_points, img0, img1):
-    H, mask = cv2.findHomography(
+    H, _ = cv2.findHomography(
         ref_points, dst_points, cv2.USAC_MAGSAC, 3.5, maxIters=1_000, confidence=0.999
     )
-    if H is None:
-        return None
-
-    h, w = img0.shape[:2]
-    corners = np.array(
-        [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32
-    ).reshape(-1, 1, 2)
-    warped = cv2.perspectiveTransform(corners, H)
-
     out = img1.copy()
-    for i in range(len(warped)):
-        cv2.line(
-            out,
-            tuple(warped[i - 1][0].astype(int)),
-            tuple(warped[i][0].astype(int)),
-            (0, 255, 0),
-            4,
-        )
+    valid_matches_indices = []
 
-    kp0 = [cv2.KeyPoint(p[0], p[1], 5) for p in ref_points]
-    kp1 = [cv2.KeyPoint(p[0], p[1], 5) for p in dst_points]
-    matches = [cv2.DMatch(i, i, 0) for i in range(len(mask)) if mask[i]]
+    if H is not None:
+        h, w = img0.shape[:2]
+        corners = np.array(
+            [[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32
+        ).reshape(-1, 1, 2)
+        try:
+            warped = cv2.perspectiveTransform(corners, H)
+            for i in range(len(warped)):
+                cv2.line(
+                    out,
+                    tuple(warped[i - 1][0].astype(int)),
+                    tuple(warped[i][0].astype(int)),
+                    (0, 255, 0),
+                    4,
+                )
+
+            for i, point in enumerate(dst_points):
+                if (
+                    cv2.pointPolygonTest(
+                        warped, (float(point[0]), float(point[1])), False
+                    )
+                    >= 0
+                ):
+                    valid_matches_indices.append(i)
+        except Exception:
+            pass
+
+    final_kp0 = [
+        cv2.KeyPoint(ref_points[i][0], ref_points[i][1], 5)
+        for i in valid_matches_indices
+    ]
+    final_kp1 = [
+        cv2.KeyPoint(dst_points[i][0], dst_points[i][1], 5)
+        for i in valid_matches_indices
+    ]
+    matches = [cv2.DMatch(i, i, 0) for i in range(len(final_kp0))]
+
     return cv2.drawMatches(
-        img0, kp0, out, kp1, matches, None, matchColor=(0, 255, 0), flags=2
+        img0, final_kp0, out, final_kp1, matches, None, matchColor=(0, 255, 0), flags=2
     )
 
 
